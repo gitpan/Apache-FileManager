@@ -7,23 +7,39 @@ Apache::FileManager - apache mod_perl file manager
 
 =head1 SYNOPSIS
 
+
 - Install in mod_perl enabled apache conf file
      <Location /FileManager>
        SetHandler           perl-script
        PerlHandler          Apache::FileManager
      </Location>
 
+
 - Or call from your own mod_perl script
   use Apache::FileManager;
   my $obj = Apache::FileManager->new();
   $obj->print();
 
-- Or create your own custom MyFileManager subclass
-  package MyFileManager;
-  use Apache::FileManager;
-  our @ISA = ('Apache::FileManager');
 
-  (Overload method docs later)
+- Or create your own custom MyFileManager subclass
+package MyFileManager;
+use strict;
+use Apache::FileManager;
+
+our @ISA = ('Apache::FileManager');
+
+sub handler {
+  my $r = shift;
+  my $obj = __PACKAGE__->new();
+  $r->send_http_header('text/html');
+  print "<HTML><HEAD><TITLE>".$r->server->server_hostname." File Manager</TITLE>
+</HEAD>";
+  $obj->print();
+  print "</HTML>";
+}
+
+.. overload the methods ..
+
 
 =head1 DESCRIPTION
 
@@ -156,7 +172,7 @@ I need to write documentation on the different methods. Maybe someone else wants
 
 =head1 BUGS
 
-I am sure there are some.
+There is a bug in File::NCopy that occurs when trying to paste an empty directory. The directory is copied but reports back as 0 directories pasted. The author is in the process of fixing the problem.
 
 =head1 AUTHOR
 
@@ -176,11 +192,12 @@ use File::stat;
 use Archive::Any;
 use POSIX qw(strftime);
 use CGI::Cookie;
+use Apache::Constants ':common';
 #use Data::Dumper;
 
 require 5.005_62;
 
-our $VERSION = '0.13';
+our $VERSION = '0.17';
 
 sub r  { return Apache::Request->instance( Apache->request ); }
 
@@ -199,13 +216,15 @@ sub new {
 
 
 # ---- If this was called directly via a perl content handler by apache -------
-sub handler ($$) {
-  my $package = shift;
+sub handler {
+  return DECLINED if defined r->param('nossi');
+  my $package = __PACKAGE__;
   my $obj = $package->new();
   r->send_http_header('text/html');
   print "<HTML><HEAD><TITLE>".r->server->server_hostname." File Manager $VERSION</TITLE></HEAD>";
   $obj->print();
   print "</HTML>";
+  return OK;
 }
 
 
@@ -216,245 +235,6 @@ sub print {
   my $view = "view_".$$o{'view'};
   $o->$view();
 }
-
-
-
-
-# ----- Views -----------------------------------------------------------------
-
-#after upload files - view
-sub view_post_upload {
-  my $o = shift;
-  print "<SCRIPT>window.opener.document.FileManager.submit(); window.opener.focus(); window.close();</SCRIPT>";
-  return undef;
-}
-
-
-#after rsync transacation - view
-sub view_post_rsync {
-  my $o = shift;
-  print "<CENTER><TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0><TR><TD>$$o{MESSAGE}</TD></TR><TR><FORM><TD ALIGN=RIGHT><INPUT TYPE=BUTTON VALUE='close' onclick=\"window.close();\"></TD></FORM></TR></TABLE></CENTER>";
-  return undef;
-}
-
-
-sub html_javascript {
-  my $o = shift;
-
-  my $cookie_name = uc(r->server->server_hostname);
-  $cookie_name =~ s/[^A-Z]//g;
-  $cookie_name .= "_FM";
-
-  return "
-  var cookie_name = '$cookie_name';
-
-  function getexpirydate(nodays){
-    var UTCstring;
-    Today = new Date();
-    nomilli=Date.parse(Today);
-    Today.setTime(nomilli+nodays*24*60*60*1000);
-    UTCstring = Today.toUTCString();
-    return UTCstring;
-  }
-
-  function getcookie(cookiename) {
-    var cookiestring=''+document.cookie;
-    var index1=cookiestring.indexOf(cookiename);
-    if (index1==-1 || cookiename=='') return ''; 
-    var index2=cookiestring.indexOf(';',index1);
-    if (index2==-1) index2=cookiestring.length; 
-    return unescape(cookiestring.substring(index1+cookiename.length+1,index2));
-  }
-  
-  function setcookie(name,value,duration){
-    cookiestring=name+'='+escape(value)+';EXPIRES='+getexpirydate(duration);
-    document.cookie=cookiestring;
-    if(!getcookie(name)){ return false; }
-    else{ return true; }
-  }
-
-  function print_upload () {
-    var w = window.open('','FileManagerUpload','scrollbars=yes,resizable=yes,width=360,height=440');
-    var d = w.document.open();
-    d.write(\"<HTML><BODY><CENTER><H1>Upload Files</H1><FORM NAME=UploadForm ACTION='".r->uri."' METHOD=POST onsubmit='window.opener.focus();' ENCTYPE=multipart/form-data><INPUT TYPE=HIDDEN NAME=FILEMANAGER_curr_dir VALUE='".r->param('FILEMANAGER_curr_dir')."'>\");
-    for (var i=1; i <= 10; i++) {
-      d.write(\"<INPUT TYPE=FILE NAME=FILEMANAGER_file\"+i+\"><BR>\");
-    }
-    d.write(\"<INPUT TYPE=SUBMIT NAME=FILEMANAGER_cmd VALUE=upload></CENTER></BODY></HTML>\");
-    d.close();
-    w.focus();
-  }
-
-  // make input check box form elements into an array ALL the time
-  function get_ckbox_array() {
-    var ar;
-
-    // no files
-    if (window.document.FileManager.FILEMANAGER_sel_files == null) {
-      ar = new Array();
-    }
-
-    // 1 file (no length)
-    else if (window.document.FileManager.FILEMANAGER_sel_files.length == null){
-      ar = [ window.document.FileManager.FILEMANAGER_sel_files ]; 
-    }
-
-    // more than one file
-    else {
-      ar = window.document.FileManager.FILEMANAGER_sel_files;
-    }
-    return ar;
-  }
-
-  // get the number checked
-  function get_num_checked() {
-    var count = 0;
-    var ar = get_ckbox_array();
-    for (var i=0; i < ar.length; i++) {
-      if (ar[i].checked == true) {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  // make cookie for checked filenames
-  function save_names (type) {
-    var cb = get_ckbox_array();
-    var ac = '';
-    for (var i=0; i < cb.length; i++) {
-      if (cb[i].checked == true) {
-        ac = ac + cb[i].value + '|';
-        cb[i].checked = false;
-      }
-    }
-    if (ac == '') {
-      window.alert('Please select file(s) by clicking on the check boxes with the mouse.');
-    } else {
-      ac = ac + type;
-      window.setcookie(cookie_name,ac,1);
-    }
-  }
-
-  //test if browser cookies are enabled
-  if (! window.document.cookie ) {
-    window.setcookie(cookie_name,'test',1);
-    if (! window.document.cookie) document.write('<H1><FONT COLOR=#990000>please enable cookies</FONT></H1>');
-    window.setcookie(cookie_name,'',-1);
-  } 
-
-function getexpirydate(nodays){
-  var UTCstring;
-  Today = new Date();
-  nomilli=Date.parse(Today);
-  Today.setTime(nomilli+nodays*24*60*60*1000);
-  UTCstring = Today.toUTCString();
-  return UTCstring;
-}
-
-function getcookie(cookiename) {
-  var cookiestring=''+document.cookie;
-  var index1=cookiestring.indexOf(cookiename);
-  if (index1==-1 || cookiename=='') return ''; 
-  var index2=cookiestring.indexOf(';',index1);
-  if (index2==-1) index2=cookiestring.length; 
-  return unescape(cookiestring.substring(index1+cookiename.length+1,index2));
-}
-
-function setcookie(name,value,duration){
-  cookiestring=name+'='+escape(value)+';EXPIRES='+getexpirydate(duration);
-  document.cookie=cookiestring;
-  if(!getcookie(name)){ return false; }
-  else{ return true; }
-}
-
-function print_upload () {
-  var w = window.open('','FileManagerUpload','scrollbars=yes,resizable=yes,width=360,height=440');
-  var d = w.document.open();
-  d.write(\"<HTML><BODY><CENTER><H1>Upload Files</H1><FORM NAME=UploadForm ACTION='".r->uri."' METHOD=POST onsubmit='window.opener.focus();' ENCTYPE=multipart/form-data><INPUT TYPE=HIDDEN NAME=FILEMANAGER_curr_dir VALUE='".r->param('FILEMANAGER_curr_dir')."'>\");
-  for (var i=1; i <= 10; i++) {
-    d.write(\"<INPUT TYPE=FILE NAME=FILEMANAGER_file\"+i+\"><BR>\");
-  }
-  d.write(\"<INPUT TYPE=SUBMIT NAME=FILEMANAGER_cmd VALUE=upload></CENTER></BODY></HTML>\");
-  d.close();
-  w.focus();
-}
-
-// make input check box form elements into an array ALL the time
-function get_ckbox_array() {
-  var ar;
-
-  // no files
-  if (window.document.FileManager.FILEMANAGER_sel_files == null) {
-    ar = new Array();
-  }
-
-  // 1 file (no length)
-  else if (window.document.FileManager.FILEMANAGER_sel_files.length == null){
-    ar = [ window.document.FileManager.FILEMANAGER_sel_files ]; 
-  }
-
-  // more than one file
-  else {
-    ar = window.document.FileManager.FILEMANAGER_sel_files;
-  }
-  return ar;
-}
-
-// get the number checked
-function get_num_checked() {
-  var count = 0;
-  var ar = get_ckbox_array();
-  for (var i=0; i < ar.length; i++) {
-    if (ar[i].checked == true) {
-      count++;
-    }
-  }
-  return count;
-}
-
-// make cookie for checked filenames
-function save_names (type) {
-  var cb = get_ckbox_array();
-  var ac = '';
-  for (var i=0; i < cb.length; i++) {
-    if (cb[i].checked == true) {
-      ac = ac + cb[i].value + '|';
-      cb[i].checked = false;
-    }
-  }
-  if (ac == '') {
-    window.alert('Please select file(s) by clicking on the check boxes with the mouse.');
-  } else {
-    ac = ac + type;
-    window.setcookie(cookie_name,ac,1);
-  }
-}
-
-//test if browser cookies are enabled
-if (! window.document.cookie ) {
-  window.setcookie(cookie_name,'test',1);
-  if (! window.document.cookie) document.write('<H1><FONT COLOR=#990000>please enable cookies</FONT></H1>');
-  window.setcookie(cookie_name,'',-1);
-} ";
-}
-
-sub html_hidden_fields {
-  my $o = shift;
-  return "
-<INPUT TYPE=HIDDEN NAME=FILEMANAGER_curr_dir VALUE='".r->param('FILEMANAGER_curr_dir')."'>
-<INPUT TYPE=HIDDEN NAME=FILEMANAGER_cmd VALUE=''>
-<INPUT TYPE=HIDDEN NAME=FILEMANAGER_arg VALUE=''>";
-}
-
-
-
-
-
-
-
-
-
 
 # ------------ Intialize object -----------------------------------------
 sub intialize {
@@ -517,7 +297,556 @@ sub intialize {
 
 
 
-# -------------- Utility Methods -------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###############################################################################
+# ----- Views --------------------------------------------------------------- #
+###############################################################################
+
+#after upload files - view
+sub view_post_upload {
+  my $o = shift;
+  print "<SCRIPT>window.opener.document.FileManager.submit(); window.opener.focus(); window.close();</SCRIPT>";
+  return undef;
+}
+
+
+#after rsync transacation - view
+sub view_post_rsync {
+  my $o = shift;
+  print "<CENTER><TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0><TR><TD>$$o{MESSAGE}</TD></TR><TR><FORM><TD ALIGN=RIGHT><INPUT TYPE=BUTTON VALUE='close' onclick=\"window.close();\"></TD></FORM></TR></TABLE></CENTER>";
+  return undef;
+}
+
+
+sub view_filemanager {
+  my $o = shift;
+
+  my $message = "<I><FONT COLOR=#990000>".$$o{MESSAGE}."</FONT></I>";
+
+  my ($location, $up_a_href) = $o->html_location_toolbar();
+  $up_a_href = "" if !defined($up_a_href);
+
+  print "
+    <!-- Scripts -->
+    ".$o->html_javascript."
+
+    <!-- Styles -->
+    ".$o->html_style_sheet()."
+
+    <FORM NAME=FileManager ACTION='".r->uri."' METHOD=POST>
+    ".$o->html_hidden_fields()."
+
+      <!-- Header -->
+      ".$o->html_top()."
+
+      <!-- Special message -->
+      $message
+
+      <TABLE CELLPADDING=2 CELLSPACING=2 BORDER=0 WIDTH=100% BGCOLOR=#606060>
+        <TR><TD>".$o->html_cmd_toolbar()."</TD></TR>
+        <TR BGCOLOR=WHITE><TD>$location</TD></TR>
+        <TR><TD>".$o->html_file_list($up_a_href)."</TD></TR>
+      </TABLE>
+
+      <!-- Footer -->
+      ".$o->html_bottom()."
+
+    </FORM>";
+
+  return undef;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###############################################################################
+# ---- HTML Component Output ------------------------------------------------ #
+###############################################################################
+
+sub html_javascript {
+  my $o = shift;
+
+  my $cookie_name = uc(r->server->server_hostname);
+  $cookie_name =~ s/[^A-Z]//g;
+  $cookie_name .= "_FM";
+
+  #start return literal
+  return "
+  <NOSCRIPT>
+    <H1><FONT COLOR=#990000>please enable javascript</FONT></H1>
+  </NOSCRIPT>
+  <SCRIPT>
+  <!--
+  var cookie_name = '$cookie_name';
+
+  function display_help () {
+    var w=window.open('','help','resizable=yes,scrollbars=yes,width=650,height=650');
+    var d = w.document.open();
+    d.write(\"<HTML> <UL><B><U><FONT SIZE=+1>Help</FONT></U></B><BR><BR>\"+
+
+\"<LI><A NAME=upload><B>How do I upload files?</B></A><BR>\"+
+\"Click on the upload menu item. After the <I>Upload Files</I> window opens, click the <I>Browse</I> button. This will pop open another window showing files on your computer. Select a file you want to upload. You can not upload directories. If you want to upload a directory, archive it first into a <I>zip</I> file or a tarball. You will then be able to extract it on the server. You can upload up to 10 files at a time. After selecting the files you want to upload, click the <I>upload</I> button to transfer the files from your machine to the server.<BR><BR>\"+
+
+\"<LI><A NAME=move><B>How do I copy or move files?</B></A><BR>\"+
+\"First click the check boxes next to the file names that you would like to copy or paste. Next click the <I>copy</I> or <I>paste</I> button. Then go to the directory you would like them pasted in. Finally, click <I>paste</I>.<BR><BR>\"+
+
+\"<LI><A NAME=move><B>Why does the file manager seem broken in certain directories or when copying or pasting certain files?</B></A><BR>\"+
+\"This occurs when the file manager does not have permission to access these files. To fix the problem, contact your system administrator and ask them to grant the webserver READ, WRITE, and EXECUTE access to your files.<BR><BR>\"+
+
+\"</UL><CENTER><FORM><INPUT TYPE=BUTTON VALUE='close' onclick='window.close();'></FORM> </CENTER> </HTML>\");
+    d.close();
+    w.focus();
+  }
+
+  function getexpirydate(nodays){
+    var UTCstring;
+    Today = new Date();
+    nomilli=Date.parse(Today);
+    Today.setTime(nomilli+nodays*24*60*60*1000);
+    UTCstring = Today.toUTCString();
+    return UTCstring;
+  }
+
+  function getcookie(cookiename) {
+    var cookiestring=''+document.cookie;
+    var index1=cookiestring.indexOf(cookiename);
+    if (index1==-1 || cookiename=='') return ''; 
+    var index2=cookiestring.indexOf(';',index1);
+    if (index2==-1) index2=cookiestring.length; 
+    return unescape(cookiestring.substring(index1+cookiename.length+1,index2));
+  }
+  
+  function setcookie(name,value,duration){
+    cookiestring=name+'='+escape(value)+';EXPIRES='+getexpirydate(duration);
+    document.cookie=cookiestring;
+    if(!getcookie(name)){ return false; }
+    else{ return true; }
+  }
+
+  function print_upload () {
+    var w = window.open('','FileManagerUpload','scrollbars=yes,resizable=yes,width=500,height=440');
+    var d = w.document.open();
+    d.write(\"<HTML><BODY><CENTER><H1>Upload Files</H1><FORM NAME=UploadForm ACTION='".r->uri."' METHOD=POST onsubmit='window.opener.focus();' ENCTYPE=multipart/form-data><INPUT TYPE=HIDDEN NAME=FILEMANAGER_curr_dir VALUE='".r->param('FILEMANAGER_curr_dir')."'>\");
+    for (var i=1; i <= 10; i++) {
+      d.write(\"<INPUT TYPE=FILE SIZE=40 NAME=FILEMANAGER_file\"+i+\"><BR>\");
+    }
+    d.write(\"<INPUT TYPE=BUTTON VALUE='cancel' onclick='window.close();'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<INPUT TYPE=SUBMIT NAME=FILEMANAGER_cmd VALUE=upload></CENTER></BODY></HTML>\");
+    d.close();
+    w.focus();
+  }
+
+  // make input check box form elements into an array ALL the time
+  function get_ckbox_array() {
+    var ar;
+
+    // no files
+    if (window.document.FileManager.FILEMANAGER_sel_files == null) {
+      ar = new Array();
+    }
+
+    // 1 file (no length)
+    else if (window.document.FileManager.FILEMANAGER_sel_files.length == null){
+      ar = [ window.document.FileManager.FILEMANAGER_sel_files ]; 
+    }
+
+    // more than one file
+    else {
+      ar = window.document.FileManager.FILEMANAGER_sel_files;
+    }
+    return ar;
+  }
+
+  // get the number checked
+  function get_num_checked() {
+    var count = 0;
+    var ar = get_ckbox_array();
+    for (var i=0; i < ar.length; i++) {
+      if (ar[i].checked == true) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // make cookie for checked filenames
+  function save_names (type) {
+    var cb = get_ckbox_array();
+    var ac = '';
+    for (var i=0; i < cb.length; i++) {
+      if (cb[i].checked == true) {
+        ac = ac + cb[i].value + '|';
+        cb[i].checked = false;
+      }
+    }
+    if (ac == '') {
+      window.alert('Please select file(s) by clicking on the check boxes with the mouse.');
+    } else {
+      ac = ac + type;
+      window.setcookie(cookie_name,ac,1);
+    }
+  }
+
+  //test if browser cookies are enabled
+  if (! window.document.cookie ) {
+    window.setcookie(cookie_name,'test',1);
+    if (! window.document.cookie) document.write('<H1><FONT COLOR=#990000>please enable cookies</FONT></H1>');
+    window.setcookie(cookie_name,'',-1);
+  }
+
+  $$o{JS}
+
+  -->
+  </SCRIPT> "; #end return literal
+
+}
+ ### end sub html_javascript
+
+sub html_style_sheet {
+  my $o = shift;
+
+  return ("
+  <STYLE TYPE='text/css'>
+    <!-- 
+      A { text-decoration: none; }
+      A:hover	{ text-decoration: underline; }
+    -->
+  </STYLE>")
+}
+
+
+
+
+sub html_hidden_fields {
+  my $o = shift;
+  return "
+<INPUT TYPE=HIDDEN NAME=FILEMANAGER_curr_dir VALUE='".r->param('FILEMANAGER_curr_dir')."'>
+<INPUT TYPE=HIDDEN NAME=FILEMANAGER_cmd VALUE=''>
+<INPUT TYPE=HIDDEN NAME=FILEMANAGER_arg VALUE=''>";
+}
+
+sub html_location_toolbar {
+  my $o = shift;
+
+  my @loc = split /\//, r->param('FILEMANAGER_curr_dir');
+
+  #already in base directory?
+  return "<B>location: / </B>" if ($#loc == -1);
+
+  #for all elements in the loc except the last one
+  my @ac;
+  my $up_a_href = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value=''; f.submit(); return false;\"><FONT COLOR=#006699 SIZE=+1><B>..</B></FONT></A>&nbsp;";
+  for (my $i = 0; $i < $#loc; $i++) {
+    push @ac, $loc[$i];
+    my $url = join("/", @ac);
+    $loc[$i] = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$url'; f.submit(); return false;\"><FONT COLOR=#006699 SIZE=+1><B>".$loc[$i]."</B></FONT></A>";
+    if ($i == ($#loc - 1)) {
+      $up_a_href = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$url'; f.submit(); return false;\"><FONT COLOR=#006699 SIZE=+1><B>..</B></FONT></A>&nbsp;";
+    }
+  }
+
+  $loc[$#loc] = "<FONT SIZE=+1><B>".$loc[$#loc]."</B></FONT>";
+
+  my $location = "<B>location: </B><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value=''; f.submit(); return false;\"><FONT COLOR=#006699 SIZE=+1><B>/</B></FONT></A>&nbsp;".join("&nbsp;<FONT SIZE=+1><B>/</B></FONT>&nbsp;", @loc);
+
+  return ($location, $up_a_href);
+}
+
+sub html_cmd_toolbar {
+  my $o = shift;
+
+  my @cmds = (
+
+   #Refresh
+   "<A HREF=# onclick=\"var f=window.document.FileManager; f.submit();\"><FONT COLOR=WHITE><B>refresh</B></FONT></A>",
+
+   #Cut
+   "<A HREF=# onclick=\"window.save_names('cut'); return false;\"><FONT COLOR=WHITE><B>cut</B></FONT></A>",
+
+   #Copy
+   "<A HREF=# onclick=\"window.save_names('copy'); return false;\"><FONT COLOR=WHITE><B>copy</B></FONT></A>",
+
+   #Paste
+  "<A HREF=# onclick=\"if (window.getcookie(cookie_name) != '') { var f=window.document.FileManager; f.FILEMANAGER_cmd.value='paste'; f.submit(); } else { window.alert('Please select file(s) to paste by checking the file(s) first and clicking copy or cut.'); } return false;\"><FONT COLOR=WHITE><B>paste</B></FONT></A>",
+
+   #Delete
+  "<A HREF=# onclick=\"
+     var f=window.document.FileManager;
+     if (get_num_checked() == 0) {
+         window.alert('Please select a file to delete by clicking on a check box with the mouse.');
+     }
+     else {
+         var msg = '\\n' +
+                   '                 Are you sure?\\n' +
+                   '\\n' +
+                   'Click OK to delete selected files & directories\\n' +
+                   '   ***including*** files in those directories';
+         if (window.confirm(msg)) {
+             f.FILEMANAGER_cmd.value='delete';
+             f.submit();
+         }
+     }
+     return false;
+\"><FONT COLOR=WHITE><B>delete</B></FONT></A>",
+
+  #Rename
+  "<A HREF=# onclick=\"var f=window.document.FileManager; if (get_num_checked() == 0) { window.alert('Please select a file to rename by clicking on a check box with the mouse.'); } else { f.FILEMANAGER_cmd.value='rename'; var rv=window.prompt('enter new name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_arg.value=rv; f.submit(); } } return false;\"><FONT COLOR=WHITE><B>rename</B></FONT></A>",
+
+  #Extract
+  "<A HREF=# onclick=\"var f=window.document.FileManager; if (get_num_checked() == 0) { window.alert('Please select a file to extract by clicking on a check box with the mouse.'); } else { f.FILEMANAGER_cmd.value='extract'; f.submit(); } return false;\"><FONT COLOR=WHITE><B>extract</B></FONT></A>",
+
+  #New Directory
+  "<A HREF=# onclick=\"var f=window.document.FileManager; var rv=window.prompt('new directory name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_arg.value=rv; f.FILEMANAGER_cmd.value='mkdir'; f.submit(); } return false;\"><FONT COLOR=WHITE><B>new directory</B></FONT></A>",
+
+  #Upload
+  "<A HREF=# onclick=\"window.print_upload(); return false;\"><FONT COLOR=WHITE><B>upload<B></FONT></A>"
+  );
+
+  #Rsync
+  my $rsync = "";
+  if ($$o{'RSYNC_TO'}) {
+    push @cmds, "<TD><A HREF=# onclick=\"if (window.confirm('Are you sure you want to synchronize with the production server?')) {var w=window.open('','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); w.focus(); var d=w.document.open(); d.write('<HTML><BODY><BR><BR><BR><CENTER>Please wait synchronizing production server.<BR>This could take several minutes.</CENTER></BODY></HTML>'); d.close(); w.location.replace('".r->uri."?FILEMANAGER_cmd=rsync','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); } return false;\"><FONT COLOR=WHITE><B>synchronize</B></FONT></A>";
+  }
+
+  return "
+<!-- Actions Tool bar -->
+<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0><TR ALIGN=CENTER><TD ALIGN=CENTER>".join("</TD><TD>&nbsp;<B><FONT COLOR=#bcbcbc SIZE=+2>|</FONT>&nbsp;</B></TD><TD>", @cmds)."</TD></TR></TABLE>";
+
+}
+
+sub html_file_list {
+  my $o = shift;
+  my $up_a_href = shift || "";
+
+  my $bgcolor = "efefef";
+
+  #get the list in this directory
+  my $curr_dir = "";
+  $curr_dir = r->param('FILEMANAGER_curr_dir')."/"
+    if (r->param('FILEMANAGER_curr_dir') ne "");
+
+  #if there is a value for the ".." directory, then add a row for that link
+  #at the *top* of the list
+  my $acum = "";
+  if ($up_a_href ne "") {
+    $acum = "
+<TR BGCOLOR=#$bgcolor>
+<TD>&nbsp;</TD>
+<TD>$up_a_href</TD>
+<TD ALIGN=CENTER>--</TD>
+<TD ALIGN=CENTER>--</TD>
+</TR>";
+    $bgcolor = "ffffff";
+  }
+
+  my $ct_rows = 0;
+
+  foreach my $file (sort <*>) {
+
+    my ($link,$last_modified,$size,$type);
+    $ct_rows++;
+
+    #if directory?
+    if (-d $file) {
+      $last_modified = "--";
+      $size = "<TD ALIGN=CENTER>--</TD>";
+      $type = "/"; # "/" designates "directory"
+      $link = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$curr_dir"."$file'; f.submit(); return false;\"><FONT COLOR=#006699>$file$type</FONT></A>";
+    }
+
+    #must be a file
+    elsif (-f $file) {
+
+      #get file size
+      my $stat = stat($file);
+      $size = $stat->size;
+      if ($size > 1024000) {
+        $size = sprintf("%0.2f",$size/1024000) . " <I>M</I>";
+      } elsif ($stat->size > 1024) {
+        $size = sprintf("%0.2f",$size/1024). " <I>K</I>";
+      } else {
+        $size = sprintf("%.2f",$size). " <I>b</I>";
+      }
+      $size =~ s/\.0{1,2}//;
+      $size = "<TD NOWRAP ALIGN=RIGHT>$size</TD>";
+
+      #get last modified
+      $last_modified = $o->formated_date($stat->mtime);
+
+      #get file type
+      if (-S $file) {
+        $type = "="; # "=" designates "socket"
+      }
+      elsif (-l $file) {
+        $type = "@"; # "@" designates "link"
+      }
+      elsif (-x $file) {
+        $type = "*"; # "*" designates "executable"
+      }
+
+      my $true_doc_root = r->document_root;
+      my $fake_doc_root = $$o{DR};
+      $fake_doc_root =~ s/^$true_doc_root//;
+      $fake_doc_root =~ s/^\///; $fake_doc_root =~ s/\/$//;
+
+      my $href = $curr_dir;
+      $href = $fake_doc_root."/".$href if $fake_doc_root;
+
+      $link = "<A HREF=\"/$href"."$file?nossi=1\" TARGET=_blank><FONT COLOR=BLACK>$file$type</FONT></A>";
+    }
+
+    $acum .= "
+<TR BGCOLOR=#$bgcolor>
+<TD><INPUT TYPE=CHECKBOX NAME=FILEMANAGER_sel_files VALUE='$curr_dir"."$file'></TD>
+<TD>$link</TD>
+<TD ALIGN=CENTER>$last_modified</TD>
+$size
+</TR>";
+
+    #alternate bgcolor so it is easier to read
+    $bgcolor = ( ($bgcolor eq "ffffff") ? "efefef" : "ffffff" );
+  }
+
+  #print a message if there were no files in this directory
+  if ($ct_rows == 0) {
+    $acum .= "<TR ALIGN=CENTER><TD COLSPAN=3><TABLE BORDER=1 WIDTH=100% BGCOLOR=WHITE><TR><TD ALIGN=CENTER><BR><I>no files found</I><BR><BR></TD></TR></TABLE></TD></TR>";
+  }
+
+  return "
+<!-- Files list -->
+<TABLE CELLPADDING=3 CELLSPACING=0 WIDTH=100% BORDER=0>
+
+<!-- Headers -->
+<TR BGCOLOR=#606060>
+<TD WIDTH=1%>&nbsp;</TD>
+<TD WIDTH=80%><FONT COLOR=WHITE><B>filename</B></FONT></TD>
+<TD WIDTH=15% ALIGN=CENTER NOWRAP><FONT COLOR=WHITE><B>last modified</B></FONT></TD>
+<TD WIDTH=4% ALIGN=CENTER><FONT COLOR=WHITE><B>size</B></FONT></TD>
+</TR>
+
+<! -- Files -->
+$acum
+</TD></TR></TABLE>";
+}
+
+sub html_top {
+  my $o = shift;
+  return ("
+<TABLE WIDTH=100% CELLPADDING=0 CELLSPAING=0><TR>
+<TD><FONT SIZE=+2 COLOR=#3a3a3a><B>".r->server->server_hostname." - file manager</B></FONT></TD>
+<TD ALIGN=RIGHT VALIGN=TOP><A HREF=# onclick=\"window.display_help(); return false;\"><FONT COLOR=#3a3a3a>help</FONT></A></TD></TR></TABLE>
+  ");
+}
+
+sub html_bottom {
+  my $o = shift;
+  return ("
+<TABLE WIDTH=100% CELLPADDING=0 CELLSPAING=0><TR>
+<TD ALIGN=RIGHT VALIGN=TOP><A HREF=http://www.cpan.org/modules/by-module/Apache/PMC TARGET=CPAN><FONT SIZE=-1 COLOR=BLACK>Apache-FileManager-$VERSION</FONT></A></FONT></TD>
+</TR>
+</TABLE>
+  ");
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################################################################
+# -------------- Utility Methods ------------------------------------------- #
+##############################################################################
 
 sub execute_cmds {
   my $o = shift;
@@ -588,40 +917,55 @@ sub get_clip_board {
 
 
 
-# -- Commands (called via form input from method execute_cmds or manually) ---
 
+
+
+
+
+
+
+
+
+
+
+###############################################################################
+# -- Commands (called via form input from method execute_cmds or manually) -- #
+###############################################################################
 sub cmd_paste {
   my $o = shift;
   my $arg1 = shift;
   my ($buffer_type, $files) = $o->get_clip_board();
 
+  my $count = 0;
+
   if ($buffer_type eq "copy") {
     my @files = map { $o->filename_esc($$o{DR}."/".$_) } @{ $files };
-    my $count = copy \1, @files, ".";
-    $$o{MESSAGE} = "$count file(s) or directories pasted.";
+    $count = copy \1, @files, ".";
   } elsif ($buffer_type eq "cut") {
     for (@{ $files }) {
       my $file = $$o{DR}."/".$_;
       if (-d $file) {
         my $file = $o->filename_esc($file);
-        my $count = copy \1, $file, ".";
-        if ($count) {
-          remove \1, $file;
+        my $tmp = copy \1, $file, ".";
+        if ($tmp) {
+          remove \1, $file and $count++;
         }
-        $$o{MESSAGE} = "$count file(s) or directories pasted.";
       } elsif (-f $file) {
-        my $count = move($file, ".");
-        $$o{MESSAGE} = "$count file(s) or directories pasted.";
+        move($file, ".") and $count++;
       }
     }
+  }
+
+  if ($count == 0) {
+    $$o{MESSAGE} = "0 files and directories pasted";
+  } elsif ($count == 1) {
+    $$o{MESSAGE} = "1 file or directory pasted";
+  } else { 
+    $$o{MESSAGE} = "$count files or directories pasted";
   }
   $$o{JS} = "window.setcookie(cookie_name,'',-1);";
   return undef;
 }
-
-
-
-
 
 sub cmd_delete {
   my $o = shift;
@@ -629,7 +973,13 @@ sub cmd_delete {
   my $sel_files = $o->get_selected_files();
   my @files = map { $o->filename_esc($$o{DR}."/".$_) } @{ $sel_files };
   my $count = remove \1, @files;
-  $$o{MESSAGE} = "$count file(s) or directories(s) deleted.";
+  if ($count == 0) {
+    $$o{MESSAGE} = "0 files and directories deleted";
+  } elsif ($count == 1) {
+    $$o{MESSAGE} = "1 file or directory deleted";
+  } else {
+    $$o{MESSAGE} = "$count files or directories deleted";
+  }
   return undef;
 }
 
@@ -757,233 +1107,7 @@ sub cmd_mkdir {
 
 
 
-sub view_filemanager {
-  my $o = shift;
 
-  my $message = "<I><FONT COLOR=#990000>".$$o{MESSAGE}."</FONT></I>";
-
-  my ($location, $up_a_href) = $o->html_location_toolbar();
-  $up_a_href = "" if !defined($up_a_href);
-
-  print "<SCRIPT>".$o->html_javascript()."$$o{JS}</SCRIPT>
-<NOSCRIPT>
-  <H1><FONT COLOR=#990000>please enable javascript</FONT></H1>
-</NOSCRIPT>
-<FONT SIZE=+2><B>".r->server->server_hostname." File Manager ".$VERSION."</B></FONT>
-<BR>
-$message
-<FORM NAME=FileManager ACTION='".r->uri."' METHOD=POST>
-".$o->html_hidden_fields()."
-<TABLE CELLPADDING=4 CELLSPACING=0 BORDER=0 WIDTH=100%>".
-  $o->html_cmd_toolbar().
-  $location.
-  $o->html_file_list($up_a_href)."
-  <TR><TD><HR WIDTH=100%></TD></TR>
-</TABLE>
-</FORM>";
-
-  return undef;
-}
-
-##########################################################################
-
-sub html_location_toolbar {
-  my $o = shift;
-
-  my @loc = split /\//, r->param('FILEMANAGER_curr_dir');
-
-  #already in base directory?
-  return "<TR><TD><B>location: / </B></TD></TR>" if ($#loc == -1);
-
-  #for all elements in the loc except the last one
-  my @ac;
-  my $up_a_href = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value=''; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=#006699 SIZE=+1><B>..</B></FONT></A>&nbsp;";
-  for (my $i = 0; $i < $#loc; $i++) {
-    push @ac, $loc[$i];
-    my $url = join("/", @ac);
-    $loc[$i] = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$url'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=#006699 SIZE=+1><B>".$loc[$i]."</B></FONT></A>";
-    if ($i == ($#loc - 1)) {
-      $up_a_href = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$url'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=#006699 SIZE=+1><B>..</B></FONT></A>&nbsp;";
-    }
-  }
-
-  $loc[$#loc] = "<FONT SIZE=+1><B>".$loc[$#loc]."</B></FONT>";
-
-  my $location = "<TR><TD><B>location: </B><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value=''; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=#006699 SIZE=+1><B>/</B></FONT></A>&nbsp;".join("&nbsp;<FONT SIZE=+1><B>/</B></FONT>&nbsp;", @loc)."</TD></TR>";
-
-  return ($location, $up_a_href);
-}
-
-sub html_cmd_toolbar {
-  my $o = shift;
-
-  my $rsync = "";
-  if ($$o{'RSYNC_TO'}) {
-    $rsync = "<TD><A HREF=# style='text-decoration:none' onclick=\"if (window.confirm('Are you sure you want to synchronize with the production server?')) {var w=window.open('','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); w.focus(); var d=w.document.open(); d.write('<HTML><BODY><BR><BR><BR><CENTER>Please wait synchronizing production server.<BR>This could take several minutes.</CENTER></BODY></HTML>'); d.close(); w.location.replace('".r->uri."?FILEMANAGER_cmd=rsync','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); } return false;\"><FONT COLOR=WHITE><B>go live!</B></FONT></A></TD>";
-  }
-
-  return "
-<!-- Actions Tool bar -->
-<TR NOWRAP>
-<TD BGCLOLR=WHITE><TABLE CELLPADDING=6 CELLSPACING=2><TR BGCOLOR=BLACK ALIGN=CENTER>
-
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.submit();\" style='text-decoration:none'><FONT COLOR=WHITE><B>refresh</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"window.save_names('cut'); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>cut</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"window.save_names('copy'); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>copy</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"if (window.getcookie(cookie_name) != '') { var f=window.document.FileManager; f.FILEMANAGER_cmd.value='paste'; f.submit(); } else { window.alert('Please select file(s) to paste by checking the file(s) first and clicking copy or cut.'); } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>paste</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"
-     var f=window.document.FileManager;
-     if (get_num_checked() == 0) {
-         window.alert('Please select a file to delete by clicking on a check box with the mouse.');
-     }
-     else {
-         var msg = '\\n' +
-                   '                 Are you sure?\\n' +
-                   '\\n' +
-                   'Click OK to delete selected files & directories\\n' +
-                   '   ***including*** files in those directories';
-         if (window.confirm(msg)) {
-             f.FILEMANAGER_cmd.value='delete';
-             f.submit();
-         }
-     }
-     return false;
-\" style='text-decoration:none'><FONT COLOR=WHITE><B>delete</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; if (get_num_checked() == 0) { window.alert('Please select a file to rename by clicking on a check box with the mouse.'); } else { f.FILEMANAGER_cmd.value='rename'; var rv=window.prompt('enter new name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_arg.value=rv; f.submit(); } } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>rename</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; if (get_num_checked() == 0) { window.alert('Please select a file to extract by clicking on a check box with the mouse.'); } else { f.FILEMANAGER_cmd.value='extract'; f.submit(); } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>extract</B></FONT></A></TD>
-
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_cmd.value='mkdir'; var rv=window.prompt('new directory name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_arg.value=rv; f.submit(); } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>new directory</B></FONT></A></TD>
-  <TD><A HREF=# style='text-decoration:none' onclick=\"window.print_upload(); return false;\"><FONT COLOR=WHITE><B>upload<B></FONT></A></TD>
-$rsync
-
-</TD></TR></TABLE></TD>
-</TR>";
-
-}
-
-##########################################################################
-
-sub html_file_list {
-  my $o = shift;
-  my $up_a_href = shift || "";
-
-  my $bgcolor = "efefef";
-
-  #get the list in this directory
-  my $curr_dir = "";
-  $curr_dir = r->param('FILEMANAGER_curr_dir')."/"
-    if (r->param('FILEMANAGER_curr_dir') ne "");
-
-  #if there is a value for the ".." directory, then add a row for that link
-  #at the *top* of the list
-  my $acum = "";
-  if ($up_a_href ne "") {
-    $acum = "
-<TR BGCOLOR=#$bgcolor>
-<TD>&nbsp;</TD>
-<TD>$up_a_href</TD>
-<TD ALIGN=CENTER>--</TD>
-<TD ALIGN=CENTER>--</TD>
-</TR>";
-    $bgcolor = "ffffff";
-  }
-
-  my $ct_rows = 0;
-
-  foreach my $file (sort <*>) {
-
-    my ($link,$last_modified,$size,$type);
-    $ct_rows++;
-
-    #if directory?
-    if (-d $file) {
-      $last_modified = "--";
-      $size = "<TD ALIGN=CENTER>--</TD>";
-      $type = "/"; # "/" designates "directory"
-      $link = "<A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_curr_dir.value='$curr_dir"."$file'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=#006699>$file$type</FONT></A>";
-    }
-
-    #must be a file
-    elsif (-f $file) {
-
-      #get file size
-      my $stat = stat($file);
-      $size = $stat->size;
-      if ($size > 1024000) {
-        $size = sprintf("%0.2f",$size/1024000) . " <I>M</I>";
-      } elsif ($stat->size > 1024) {
-        $size = sprintf("%0.2f",$size/1024). " <I>K</I>";
-      } else {
-        $size = sprintf("%.2f",$size). " <I>b</I>";
-      }
-      $size =~ s/\.0{1,2}//;
-      $size = "<TD NOWRAP ALIGN=RIGHT>$size</TD>";
-
-      #get last modified
-      $last_modified = $o->formated_date($stat->mtime);
-
-      #get file type
-      if (-S $file) {
-        $type = "="; # "=" designates "socket"
-      }
-      elsif (-l $file) {
-        $type = "@"; # "@" designates "link"
-      }
-      elsif (-x $file) {
-        $type = "*"; # "*" designates "executable"
-      }
-
-      my $true_doc_root = r->document_root;
-      my $fake_doc_root = $$o{DR};
-      $fake_doc_root =~ s/^$true_doc_root//;
-      $fake_doc_root =~ s/^\///; $fake_doc_root =~ s/\/$//;
-
-      my $href = $curr_dir;
-      $href = $fake_doc_root."/".$href if $fake_doc_root;
-
-      $link = "<A HREF=\"/$href"."$file?nossi=1\" TARGET=_blank style='text-decoration:none'><FONT COLOR=BLACK>$file$type</FONT></A>";
-    }
-
-    $acum .= "
-<TR BGCOLOR=#$bgcolor>
-<TD><INPUT TYPE=CHECKBOX NAME=FILEMANAGER_sel_files VALUE='$curr_dir"."$file'></TD>
-<TD>$link</TD>
-<TD ALIGN=CENTER>$last_modified</TD>
-$size
-</TR>";
-
-    #alternate bgcolor so it is easier to read
-    $bgcolor = ( ($bgcolor eq "ffffff") ? "efefef" : "ffffff" );
-  }
-
-  #print a message if there were no files in this directory
-  if ($ct_rows == 0) {
-    $acum .= "<TR ALIGN=CENTER><TD COLSPAN=3><TABLE BORDER=1 WIDTH=100%><TR><TD ALIGN=CENTER><BR><I>no files found</I><BR><BR></TD></TR></TABLE></TD></TR>";
-  }
-
-  return "
-<!-- Files list -->
-<TR>
-<TD><TABLE CELLPADDING=3 CELLSPACING=0 WIDTH=100% BORDER=0>
-
-<!-- Headers -->
-<TR BGCOLOR=#606060>
-<TD WIDTH=1%>&nbsp;</TD>
-<TD WIDTH=80%><FONT COLOR=WHITE><B>filename</B></FONT></TD>
-<TD WIDTH=15% ALIGN=CENTER NOWRAP><FONT COLOR=WHITE><B>last modified</B></FONT></TD>
-<TD WIDTH=4% ALIGN=CENTER><FONT COLOR=WHITE><B>size</B></FONT></TD>
-</TR>
-
-<! -- Files -->
-$acum
-</TD></TR></TABLE></TD></TR>";
-}
 
 
 

@@ -57,3 +57,23 @@ Revision history for Perl extension Apache::FileManager.
 
 0.13 Thur July 11 14:32:21 Philip Collins
   - updated the documentation
+
+0.14 Thur July 11 17:15:10 Philip Collins
+  - updated look of application
+  - added the beginnings of the help section
+  - used CSS tags to to hovering underline
+  - enlarged the file upload path boxes to 40 (Hardy)
+
+0.15 Friday July 12 20:50:02 Philip Collins
+  - changed `go live!` to `synchronize`
+  - email File::NCopy author to fix empty directory copy
+  - fixed cut count so it can be > 1
+  - Added Help Section
+
+0.16 19:10:00 Philip Collins
+  - Added close button to upload window
+  - cleaned up the documentation a bit
+
+0.17 11:00:00 Philip Collins 
+  - added return declined stmt if we see nossi param
+
