@@ -1,17 +1,32 @@
 Revision history for Perl extension Apache::FileManager.
 
 0.01  Thu Jun 20 07:17:25 2002  Philip Collins
-	- original version; created by h2xs 1.20 with options
-		-AX -n Apache::FileManager
+  - original version; created by h2xs 1.20 with options
+  -AX -n Apache::FileManager
 
 0.02  Fri Jun 21 10:30:55 2002  Philip Collins
   - made javacript control cut / copy buffer so module user does not 
     need to call the constructor before sending the header anymore.
-  - added rsyn functionality
+  - added rsync functionality
   - checked for null filenames with javascript in rename and mkdir actions
   - updated documentation
 
 0.03  Fri Jun 21 11:00:11 2002  Philip Collins
   - added prerequisite modules to 'PREREQ_PM' in Makefile.PL.
+
+0.04  Fri Jun 21 04:30:00 2002 Philip Collins
+  - let user upload filenames with dashes in them.
+  - show javascript not enabled warning message
+  - show cookies not enabled warning message 
+  - alert user when trying to copy, or cut 0 selected files.
+  - got rid of stringify & destringify functions as well as
+    MIME::Base64 and Storable libs since they aren't used anymore.
+  - added confirm dialog to 'go live!' button.
+  - bold faced path location to make it more noticable.
   
+0.05  Tues Jun 25 08:00:00 2002 Philip Collins
+  - fixed javascript checkbox array bug occuring when only 0 or 1 files 
+    where viewable in a single directory.
+  - copy/cut buffer is erased after pasting files.
+  - show alert when nothing to paste.
 

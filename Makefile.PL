@@ -11,8 +11,6 @@ WriteMakefile(
       'File::stat'      => 0,
       'Archive::Any'    => 0,
       'POSIX'           => 0,
-      'Storable'        => 0,
-      'MIME::Base64'    => 0,
       'CGI::Cookie'     => 0
     }
 );
