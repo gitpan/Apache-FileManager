@@ -5,6 +5,7 @@ WriteMakefile(
     'VERSION_FROM'	=> 'FileManager.pm',
     'PREREQ_PM'		=> { 
       'Apache::Request'   => 0,
+      'Apache::Util'      => 0,
       'Apache::File'      => 1.01,
       'File::NCopy'       => 0.32,
       'File::Copy'        => 2.03,
@@ -13,7 +14,8 @@ WriteMakefile(
       'Archive::Any'      => 0.03,
       'POSIX'             => 1.03,
       'CGI::Cookie'       => 1.20,
-      'Apache::Constants' => 1.09
+      'Apache::Constants' => 1.09,
+      'IO::File'          => 0
     }
 );
 

@@ -70,10 +70,28 @@ Revision history for Perl extension Apache::FileManager.
   - fixed cut count so it can be > 1
   - Added Help Section
 
-0.16 19:10:00 Philip Collins
+0.16 Philip Collins
   - Added close button to upload window
   - cleaned up the documentation a bit
 
-0.17 11:00:00 Philip Collins 
+0.17 Philip Collins 
   - added return declined stmt if we see nossi param
+
+0.18 Tue Nov 19 15:00 Philip Collins 
+  - fixed extract to report error when trying to extract invalid archives
+  - Apache::Util::escape_html on all files names
+  - added ability to mass select and deselect shown files
+  - added ability to edit and preview edited files
+  - added error message for rename and edit operation when selected filed != 1
+  - fixed bad error after canceling a rename file dialog then refreshing
+  - print error dialog when trying to create blank directory name
+  - added time to date stamp
+
+0.19 Philip Collins 
+  - prevented file edit screen from opening when cancel is clicked when creating new filenames
+  - fixed up documentation
+
+   
+  
+
 
