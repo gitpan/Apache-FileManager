@@ -114,7 +114,7 @@ It would be nice if you could choose a different base directory other then the d
 =head1 AUTHOR
 
 Apache::FileManager was written by Philip Collins 
-E<lt>pmc2@sr.unh.eduE<gt>.
+E<lt>collins_p@yahoo.comE<gt>.
 
 =cut
 
@@ -130,11 +130,11 @@ use POSIX qw(strftime);
 use Storable qw(freeze thaw);
 use MIME::Base64 qw(encode_base64 decode_base64);
 use CGI::Cookie;
-use Data::Dumper;
+#use Data::Dumper;
 
 require 5.005_62;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 sub r      { return Apache::Request->instance( Apache->request ); }
 

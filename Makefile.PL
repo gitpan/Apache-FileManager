@@ -1,8 +1,19 @@
 use ExtUtils::MakeMaker;
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
 WriteMakefile(
+    'AUTHOR'      => 'Philip Collins (collins_p@yahoo.com)',
     'NAME'		=> 'Apache::FileManager',
-    'VERSION_FROM'	=> 'FileManager.pm', # finds $VERSION
-    'PREREQ_PM'		=> {}, # e.g., Module::Name => 1.1
+    'VERSION_FROM'	=> 'FileManager.pm',
+    'PREREQ_PM'		=> { 
+      'Apache::Request' => 0,
+      'File::NCopy'     => 0,
+      'File::Copy'      => 0,
+      'File::Remove'    => 0,
+      'File::stat'      => 0,
+      'Archive::Any'    => 0,
+      'POSIX'           => 0,
+      'Storable'        => 0,
+      'MIME::Base64'    => 0,
+      'CGI::Cookie'     => 0
+    }
 );
+

@@ -10,5 +10,8 @@ Revision history for Perl extension Apache::FileManager.
   - added rsyn functionality
   - checked for null filenames with javascript in rename and mkdir actions
   - updated documentation
+
+0.03  Fri Jun 21 11:00:11 2002  Philip Collins
+  - added prerequisite modules to 'PREREQ_PM' in Makefile.PL.
   
 
