@@ -15,20 +15,16 @@ Install in mod_perl enabled apache conf file
 
 Or call from your own mod_perl script
   use Apache::FileManager;
-
-  #before the header has been sent
   my $obj = Apache::FileManager->new();
-
-  #after header has been sent
   $obj->print();
 
 =head1 DESCRIPTION
 
 The Apache::FileManager module is a simple HTML file manager. It provides file manipulations such as cut, copy, paste, delete, rename, extract archive, create directory, and upload files. All of these can be enacted on one or more files at a time (except rename). This module requires the client to have Java-script, and cookies enabled.
 
-=head1 SPECIAL NOTES
+The Apache::FileManager also can be used for a development site. The document tree can then be copied to the production server with the click of a button in the File Manager via an rsync. If this functionality is wanted, you must also install File::Rsync.
 
-If you use the OO interface for the file manager, make sure you instantiate the object BEFORE the header is sent! If you do not do this, Apache::FileManager can not store past cut and copied files inside a cookie.
+=head1 SPECIAL NOTES
 
 Make sure the web server has read, write, and execute access access to the
 directory you want to manage files in. Typically you are going to want to
@@ -39,9 +35,77 @@ chmod -R 755 /web/xyz/htdocs
 
 The extract functionality only works with tarballs and zips. Is there demand for anything else?
 
+=head1 RSYNC FEATURE
+
+Warning! rsync will delete files on the production server that do not exist on the development server for the directory specified on the production server specified by the RSYNC_TO directive.
+
+To use the rync functionality you must have ssh, rsync, and the File::Rsync perl module installed on the development server. You also must have an sshd running on the production server.
+
+Make sure you always fully qualify your server names so you don't have different values in your known hosts file.
+for example:
+ssh my-machine                -  wrong
+ssh my-machine.subnet.com     -  right
+
+Note: if the ip address of the production_server changes you will need a new known_hosts file.
+
+
+
+To get the rsync feature to work do the following:
+
+  #1 log onto the production server
+
+  #2 become root
+
+  #3 give web server user (typically nobody) a home area
+     I made mine /usr/local/apache/nobody
+     - production_server> mkdir /usr/local/apache/nobody
+     - edit passwd file and set new home area for nobody
+     - production_server> mkdir /usr/local/apache/nobody/.ssh
+
+  #4 log onto the development server
+
+  #5 become root
+
+  #6 give web server user (typically nobody) a home area
+     - dev_server> mkdir /usr/local/apache/nobody
+     - dev_server> chown -R nobody.nobody /usr/local/apache/nobody
+     - edit passwd file and set new home area for nobody
+     - dev_server> su - nobody
+     - dev_server> ssh-keygen -t dsa      (don't use passphrase)
+     - dev_server> ssh production_server (will fail but will make known_hosts file)
+     - log out from user nobody back to root user
+     - dev_server> cd /usr/local/apache/nobody/.ssh
+     - dev_server> scp id_dsa.pub production_server:/usr/local/apache/nobody/.ssh/authorized_keys
+     - dev_server> chown -R nobody.nobody /usr/local/apache/nobody
+     - dev_server> chmod -R 700 /usr/local/apache/nobody
+
+  #7 log back into the production server
+
+  #8 become root
+
+  #9 Do the following commands:
+     - production_server> chown -R nobody.nobody /usr/local/apache/nobody
+     - production_server> chmod -R 700 /usr/local/apache/nobody
+
+You also need to specify the production server in the development server's web conf file. So your conf file should look like this:
+
+     <Location /FileManager>
+       SetHandler           perl-script
+       PerlHandler          Apache::FileManager
+       PerlSetVar           RSYNC_TO   production_server:/web/xyz/htdocs
+     </Location>
+
+If your ssh path is not /usr/bin/ssh or /usr/local/bin/ssh, you also need to specify the path in the conf file or in the contructor with the directive SSH_PATH.
+
+You can also specify RSYNC_TO in the constructor:
+my $obj = Apache::FileManager->new({ RSYNC_TO => "production_server:/web/xyz" });
+
+Also make sure /web/xyz and all files in the tree are readable, writeable, and executable by nobody on both the production server AND the development server.
+
+
 =head1 BUGS
 
-I am sure there are some bugs. All file operations refer to files using unix style filenames, so this probably won't work with windows. I did see a module that will abstract this for you so I might add windows operbility later.
+I am sure there are some.
 
 =head1 TODO
 
@@ -70,7 +134,7 @@ use Data::Dumper;
 
 require 5.005_62;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 sub r      { return Apache::Request->instance( Apache->request ); }
 
@@ -78,7 +142,7 @@ sub r      { return Apache::Request->instance( Apache->request ); }
 sub handler {
   my $obj = __PACKAGE__->new();
   r->send_http_header('text/html');
-  print "<HTML><HEAD><TITLE>File Manager</TITLE></HEAD>";
+  print "<HTML><HEAD><TITLE>".r->server->server_hostname." File Manager $VERSION</TITLE></HEAD><FONT SIZE=+2><B>".r->server->server_hostname." File Manager $VERSION</B></FONT><BR>";
   $obj->print();
   print "</HTML>";
 }
@@ -86,7 +150,13 @@ sub handler {
 
 sub new {
   my $pack = shift;
-  my $o = bless {}, $pack;
+  my $ref = shift || {};
+
+
+  my $o = bless $ref, $pack;
+
+  # Is this filemanager rsync capable?
+  $$o{'RSYNC_TO'} ||= r->dir_config('RSYNC_TO');
 
 
   #set some defaults (for warnings sake)
@@ -94,26 +164,37 @@ sub new {
     unless defined r->param('FILEMANAGER_curr_dir');
   r->param('FILEMANAGER_action'     => "") 
     unless defined r->param('FILEMANAGER_action');
-  r->param('FILEMANAGER_sel_files'  => []) 
-    unless defined r->param('FILEMANAGER_sel_files');
   r->param('FILEMANAGER_rename'     => "") 
     unless defined r->param('FILEMANAGER_rename');
   r->param('FILEMANAGER_new_dir'    => "")
     unless defined r->param('FILEMANAGER_new_dir');
+  r->param('FILEMANAGER_sel_files'  => [])
+    unless defined r->param('FILEMANAGER_sel_files');
+
+  #get names of selected files
+  my @sel_files = r->param('FILEMANAGER_sel_files');
 
 
   #get copy and cut file arrays
-  my ($cut_files, $copy_files);
+  $$o{buffer_type} = "";
+  $$o{buffer_filenames} = [];
   if (r->header_in('Cookie')) {
+    my $cookie_name = uc(r->server->server_hostname);
+    $cookie_name =~ s/[^A-Z]//g;
+    $cookie_name .= "_FM";
     my %cookies = CGI::Cookie->parse(r->header_in('Cookie'));
-    my $server_name = r->server->server_hostname;
-    if (exists $cookies{"$server_name FileManager"}) {
-      my $ar = &destringify( $cookies{"$server_name FileManager"}->value );
-      if (ref($ar) eq "ARRAY") {
-        ($cut_files, $copy_files) = @{ $ar }; 
+    if (exists $cookies{$cookie_name}) {
+      my $data = $cookies{$cookie_name}->value;
+      my @ar = split /\|/, $data;
+
+      #is there us something in buffer
+      if ($#ar > 0) {
+        $$o{buffer_type}      = pop @ar;
+        $$o{buffer_filenames} = \@ar;
       }
     }
   }
+
 
   #document root
   my $dr = r->document_root;
@@ -130,30 +211,14 @@ sub new {
   }
   r->param('FILEMANAGER_curr_dir' => $curr_dir);
 
-  #get names of selected files
-  my @sel_files = r->param('FILEMANAGER_sel_files');
-  
-
-  #list selected files in copy buffer
-  if (r->param('FILEMANAGER_action') eq "copy") {
-    $cut_files = undef;
-    $copy_files = \@sel_files;
-  }
-
-  
-  #list selected files in cut buffer
-  elsif (r->param('FILEMANAGER_action') eq "cut") {
-    $copy_files = undef;
-    $cut_files = \@sel_files;
-  }
 
   #paste buffered files into current directory
-  elsif (r->param('FILEMANAGER_action') eq "paste") {
-    if (ref($copy_files) eq "ARRAY") {
-      my @files = map { &fn_esc($dr."/".$_) } @{ $copy_files };
+  if (r->param('FILEMANAGER_action') eq "paste") {
+    if ($$o{buffer_type} eq "copy") {
+      my @files = map { &fn_esc($dr."/".$_) } @{ $$o{buffer_filenames} };
       copy \1, @files, ".";
-    } elsif (ref($cut_files) eq "ARRAY") {
-      for (@{ $cut_files }) {
+    } elsif ($$o{buffer_type} eq "cut") {
+      for (@{ $$o{buffer_filenames} }) {
         my $file = $dr."/".$_;
         if (-d $file) {
           my $file = &fn_esc($file);
@@ -214,9 +279,34 @@ sub new {
   }
 
   #this is some future to do stuff (rsync htdocs to a production server)
-  elsif (r->param('FILEMANAGER_action') eq "go live") {
-  
+  elsif (r->param('FILEMANAGER_action') eq "rsync") {
+    $$o{'SSH_PATH'} ||= r->dir_config('SSH_PATH');
 
+    #try some default paths for ssh if we can't find ssh
+    for (qw(/usr/bin/ssh /usr/local/bin/ssh)) {
+      last if $$o{'SSH_PATH'};
+      $$o{'SSH_PATH'} = $_ if (-f $_);
+    }
+
+    eval "require File::Rsync";
+    if ($@) {
+      r->log_error($@);
+      $$o{MESSAGE} = "Module File::Rsync not installed.";
+    } else {   
+      my $obj = File::Rsync->new( {
+        'archive'    => 1,
+        'compress'   => 1,
+        'rsh'        => $$o{'SSH_PATH'},
+        'delete'     => 1,
+        'stats'      => 1
+      } );
+
+      $obj->exec( { src  => r->document_root, 
+                    dest => $$o{'RSYNC_TO'}    } ) 
+        or warn "rsyn failed\n";
+      $$o{MESSAGE} = join ("<BR>", @{ $obj->out }) if ($obj->out);
+      $$o{MESSAGE} = join ("<BR>", @{ $obj->err }) if ($obj->err);
+    }
   }
 
   #create new directory in the current directory
@@ -226,10 +316,10 @@ sub new {
 
   
   #send copy and cut file arrays in a cookie
-  my $encoded = &stringify([$cut_files, $copy_files]);
-  my $server_name = r->server->server_hostname;
-  my $cookie = new CGI::Cookie(-name=>"$server_name FileManager", -value=>$encoded);
-  r->headers_out->add('Set-Cookie' => $cookie);
+#  my $encoded = &stringify([$cut_files, $copy_files]);
+#  my $server_name = r->server->server_hostname;
+#  my $cookie = new CGI::Cookie(-name=>"$server_name FileManager", -value=>$encoded);
+#  r->headers_out->add('Set-Cookie' => $cookie);
 
   return $o;
 }
@@ -246,8 +336,21 @@ sub print {
     return undef;
   }
 
-  #This is future code for rsync functionality
-  #<TD><A HREF=# style='text-decoration:none'><FONT COLOR=WHITE><B>go live!</B></FONT></A></TD>
+  #special case if this was an rsync 
+  #just display the message with a close button
+  elsif (r->param('FILEMANAGER_action') eq "rsync") {
+    print "<CENTER><TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0><TR><TD>$$o{MESSAGE}</TD></TR><TR><FORM><TD ALIGN=RIGHT><INPUT TYPE=BUTTON VALUE='close' onclick=\"window.close();\"></TD></FORM></TR></TABLE></CENTER>";
+    return undef;
+  }
+
+  my $rsync = "";
+  if (exists $$o{'RSYNC_TO'}) {
+    $rsync = "<TD><A HREF=# style='text-decoration:none' onclick=\"var w=window.open('','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); w.focus(); var d=w.document.open(); d.write('<HTML><BODY><BR><BR><BR><CENTER>Please wait synchronizing production server.<BR>This could take several minutes.</CENTER></BODY></HTML>'); d.close(); w.location.replace('".r->uri."?FILEMANAGER_action=rsync','RSYNC','scrollbars=yes,resizables=yes,width=400,height=500'); return false;\"><FONT COLOR=WHITE><B>go live!</B></FONT></A></TD>";
+  }
+
+  my $cookie_name = uc(r->server->server_hostname);
+  $cookie_name =~ s/[^A-Z]//g;
+  $cookie_name .= "_FM";
 
   print "
 <SCRIPT>
@@ -262,6 +365,26 @@ sub print {
     w.document.close();
     w.focus();
   }
+
+  var cookie_name = '$cookie_name';
+
+  function setCookie(value) {
+    if (value != null && value != '') 
+      document.cookie = cookie_name + '=' + escape(value) + ';'
+  }
+
+  function save_names (type) {
+    var cb = window.document.FileManager.FILEMANAGER_sel_files;
+    var ac = '';
+    for (var i=0; i < cb.length; i++) {
+      if (cb[i].checked == true) {
+        ac = ac + cb[i].value + '|';
+        cb[i].checked = false;
+      }
+    }
+    ac = ac + type;
+    window.setCookie(ac);
+  }
 </SCRIPT>
 
 <FORM NAME=FileManager ACTION='".r->uri."' METHOD=POST>
@@ -270,7 +393,6 @@ sub print {
 <INPUT TYPE=HIDDEN NAME=FILEMANAGER_new_dir VALUE=''>
 <INPUT TYPE=HIDDEN NAME=FILEMANAGER_rename VALUE=''>
 
-<H1>File Manager</H1>
 
 <TABLE CELLPADDING=4 CELLSPACING=0 BORDER=0 WIDTH=100%>
 
@@ -281,14 +403,17 @@ sub print {
 <TD BGCLOLR=WHITE><TABLE CELLPADDING=6 CELLSPACING=2><TR BGCOLOR=BLACK ALIGN=CENTER>
 
   <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.submit();\" style='text-decoration:none'><FONT COLOR=WHITE><B>refresh</B></FONT></A></TD>
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='cut'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>cut</B></FONT></A></TD>
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='copy'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>copy</B></FONT></A></TD>
+
+  <TD><A HREF=# onclick=\"window.save_names('cut'); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>cut</B></FONT></A></TD>
+  <TD><A HREF=# onclick=\"window.save_names('copy'); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>copy</B></FONT></A></TD>
   <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='paste'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>paste</B></FONT></A></TD>
   <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='delete'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>delete</B></FONT></A></TD>
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='rename'; f.FILEMANAGER_rename.value=window.prompt('enter new name',''); f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>rename</B></FONT></A></TD>
+  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='rename'; var rv=window.prompt('enter new name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_rename.value=rv; f.submit(); } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>rename</B></FONT></A></TD>
   <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='extract'; f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>extract</B></FONT></A></TD>
-  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='mkdir'; f.FILEMANAGER_new_dir.value=window.prompt('new directory name',''); f.submit(); return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>new directory</B></FONT></A></TD>
+  <TD><A HREF=# onclick=\"var f=window.document.FileManager; f.FILEMANAGER_action.value='mkdir'; var rv=window.prompt('new directory name',''); if ((rv != null)&&(rv != '')) { f.FILEMANAGER_new_dir.value=rv; f.submit(); } return false;\" style='text-decoration:none'><FONT COLOR=WHITE><B>new directory</B></FONT></A></TD>
   <TD><A HREF=# style='text-decoration:none' onclick=\"window.print_upload(); return false;\"><FONT COLOR=WHITE><B>upload<B></FONT></A></TD>
+$rsync
+
 
 </TD></TR></TABLE></TD>
 </TR>
