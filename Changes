@@ -30,3 +30,9 @@ Revision history for Perl extension Apache::FileManager.
   - copy/cut buffer is erased after pasting files.
   - show alert when nothing to paste.
 
+0.06  Fri Jun 28 08:05:20 Philip Collins
+  - Add perl module prerequisite documentation (request from Hardy)
+  - Add prerequisite Apache::File in use statment and makefile.
+  
+
+

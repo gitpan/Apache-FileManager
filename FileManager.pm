@@ -22,7 +22,17 @@ Or call from your own mod_perl script
 
 The Apache::FileManager module is a simple HTML file manager. It provides file manipulations such as cut, copy, paste, delete, rename, extract archive, create directory, and upload files. The interface is clean and simple, and configuration is a breeze.
 
-For those of you who are up to the challenge, you can configure Apache::FileManager on run on a development server and update your live server with the click on a button. 
+For those of you who are up to the challenge, you can configure Apache::FileManager on run on a development server and update your live server htdocs tree with the click on a button. 
+
+=head1 PREREQUISITES 
+
+  The following (non-code) perl modules must be installed before installing Apache::FileManager.
+
+      Apache::Request => 1.00
+      File::NCopy     => 0.32
+      File::Remove    => 0.20
+      Archive::Any    => 0.03
+      CGI::Cookie     => 1.20
 
 =head1 SPECIAL NOTES
 
@@ -119,6 +129,7 @@ E<lt>pmc@cpan.orgE<gt>.
 use strict;
 use warnings;
 use Apache::Request;
+use Apache::File;
 use File::NCopy  qw(copy);
 use File::Copy   qw(move);
 use File::Remove qw(remove);
@@ -130,7 +141,7 @@ use CGI::Cookie;
 
 require 5.005_62;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 sub r      { return Apache::Request->instance( Apache->request ); }
 
@@ -186,7 +197,7 @@ sub new {
       my $data = $cookies{$cookie_name}->value;
       my @ar = split /\|/, $data;
 
-      #is there us something in buffer
+      #is there something in buffer
       if ($#ar > 0) {
         $$o{buffer_type}      = pop @ar;
         $$o{buffer_filenames} = \@ar;
@@ -201,7 +212,7 @@ sub new {
 
   #verify current working directory
   $_ = r->param('FILEMANAGER_curr_dir');
-  s/\.\./\./g; s/^\///; s/\/$//;
+  s/\.\.//g; s/^\///; s/\/$//;
   my $curr_dir = $_;
 
   #set current directory
